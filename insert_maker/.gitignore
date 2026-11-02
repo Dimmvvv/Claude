@@ -1,3 +1,4 @@
 *.mp4
 *_preview_*.png
 __pycache__/
+work/

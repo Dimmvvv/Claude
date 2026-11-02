@@ -253,7 +253,8 @@ def build(args):
         end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
         x0 = r[0] * K
         x1 = max(r[2] * K, end_ru + pad * K)
-        rect = [x0, r[1] * K, x1, r[3] * K]
+        # нижний край — до конца строки, чтобы закрыть подчёркивания ссылок
+        rect = [x0, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * hmed) * K]
         ru_rects.append(rect)
         dr.rectangle(rect, fill=info["bg"])
     for i, li in enumerate(range(L0, L1 + 1)):

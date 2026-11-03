@@ -198,7 +198,11 @@ def build(args):
     shot = Image.open(args.image).convert("RGB")
     info = detect_layout(shot)
     lines = info["lines"]
-    L0, W0, L1, W1 = parse_sel(args.sel, lines)
+    sels = args.sel if isinstance(args.sel, list) else [args.sel]
+    rus = args.ru if isinstance(args.ru, list) else [args.ru]
+    if len(sels) != len(rus):
+        sys.exit("Число --sel и --ru должно совпадать: по паре на каждое выделение")
+    parsed = [parse_sel(s, lines) for s in sels]
 
     # размер карточки в финале
     max_w, max_h = W * args.card_w, H * 0.66
@@ -208,39 +212,51 @@ def build(args):
     hmed = info["hmed"]
     pad = 0.10 * hmed
 
-    # прямоугольники выделения (в координатах скриншота)
-    hl_rects = []
-    for li in range(L0, L1 + 1):
-        l = lines[li]
-        ws = l["words"]
-        a = ws[W0][0] if li == L0 else ws[0][0]
-        b = ws[W1][1] if li == L1 else ws[-1][1]
-        top = l["base"] - info["asc"] - 0.12 * hmed
-        bot = l["base"] + 0.34 * hmed
-        hl_rects.append([a - pad, top, b + pad, bot])
+    # прямоугольники выделения (в координатах скриншота) и «слоты» для перевода
+    hl_rects, slots_all, words_all = [], [], []
+    for (L0, W0, L1, W1), ru in zip(parsed, rus):
+        rects = []
+        for li in range(L0, L1 + 1):
+            l = lines[li]
+            ws = l["words"]
+            xa = ws[W0][0] if li == L0 else ws[0][0]
+            xb = ws[W1][1] if li == L1 else ws[-1][1]
+            top = l["base"] - info["asc"] - 0.12 * hmed
+            bot = l["base"] + 0.34 * hmed
+            rects.append([xa - pad, top, xb + pad, bot])
+        hl_rects += rects
+        tail_after = W1 < len(lines[L1]["words"]) - 1
+        slots = []
+        for i, li in enumerate(range(L0, L1 + 1)):
+            x0 = rects[i][0] + pad if i == 0 else info["left"]
+            xmax = (lines[L1]["words"][W1][1] if (li == L1 and tail_after) else info["right"])
+            slots.append((x0 * K, xmax * K + 2))
+        slots_all.append(slots)
+        words_all.append(tokenize(ru))
 
-    # раскладка перевода
-    tail_after = W1 < len(lines[L1]["words"]) - 1
-    slots = []
-    for i, li in enumerate(range(L0, L1 + 1)):
-        x0 = hl_rects[i][0] + pad if i == 0 else info["left"]
-        xmax = (lines[L1]["words"][W1][1] if (li == L1 and tail_after) else info["right"])
-        slots.append((x0 * K, xmax * K + 2))
-    words = tokenize(args.ru)
+    # кегль: как у оригинала, уменьшаем, пока все переводы не влезут (один размер на все)
     probe = load_fonts(200)
-    # (база - верх строки) в оригинале ≈ высота выносных элементов (d, l, f)
     asc_box = probe[("lat", False)].getbbox("dlfhk", anchor="ls")
     cap_h = -asc_box[1] / 200
     size0 = info["asc"] * K / cap_h
-    size, lay = size0, None
-    while size > size0 * 0.6:
+
+    def fit(words, slots):
+        s = size0
+        while s > size0 * 0.6:
+            if layout(words, load_fonts(round(s)), slots):
+                return s
+            s *= 0.97
+        return None
+    sizes = [fit(w, sl) for w, sl in zip(words_all, slots_all)]
+    if None in sizes:
+        sys.exit("Перевод не помещается в строки выделения — сократите текст")
+    size = min(sizes)
+    while True:
         fonts = load_fonts(round(size))
-        lay = layout(words, fonts, slots)
-        if lay:
+        lays = [layout(w, fonts, sl) for w, sl in zip(words_all, slots_all)]
+        if all(lays):
             break
-        size *= 0.97
-    if not lay:
-        sys.exit("Перевод не помещается в строки предложения — сократите текст")
+        size *= 0.98
     if size < size0 * 0.97:
         print(f"! перевод уменьшен до {size / size0:.0%} от кегля оригинала, чтобы влезть")
 
@@ -249,23 +265,23 @@ def build(args):
     dr = ImageDraw.Draw(R)
     ink = info["ink"]
     ru_rects = []
-    space = fonts[("cyr", False)].getlength(" ")
-    for i, li in enumerate(range(L0, L1 + 1)):
-        base = lines[li]["base"] * K
-        r = hl_rects[i]
-        end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
-        x0 = r[0] * K
-        x1 = max(r[2] * K, end_ru + pad * K)
-        # нижний край — до конца строки, чтобы закрыть подчёркивания ссылок
-        rect = [x0, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * hmed) * K]
-        ru_rects.append(rect)
-        dr.rectangle(rect, fill=info["bg"])
-    for i, li in enumerate(range(L0, L1 + 1)):
-        base = lines[li]["base"] * K
-        for x, w in lay[i]:
-            for key, t in runs_of(w):
-                dr.text((x, base), t, font=fonts[key], fill=ink, anchor="ls")
-                x += fonts[key].getlength(t)
+    hi = 0
+    for (L0, W0, L1, W1), lay in zip(parsed, lays):
+        for i, li in enumerate(range(L0, L1 + 1)):
+            r = hl_rects[hi]; hi += 1
+            end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
+            x1 = max(r[2] * K, end_ru + pad * K)
+            # нижний край — до конца строки, чтобы закрыть подчёркивания ссылок
+            rect = [r[0] * K, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * hmed) * K]
+            ru_rects.append(rect)
+            dr.rectangle(rect, fill=info["bg"])
+    for (L0, W0, L1, W1), lay in zip(parsed, lays):
+        for i, li in enumerate(range(L0, L1 + 1)):
+            base = lines[li]["base"] * K
+            for x, w in lay[i]:
+                for key, t in runs_of(w):
+                    dr.text((x, base), t, font=fonts[key], fill=ink, anchor="ls")
+                    x += fonts[key].getlength(t)
     Rn = np.asarray(R, np.float32)
     An = np.asarray(A, np.float32)
 
@@ -398,8 +414,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--detect", action="store_true")
-    ap.add_argument("--sel")
-    ap.add_argument("--ru")
+    ap.add_argument("--sel", action="append")
+    ap.add_argument("--ru", action="append")
     ap.add_argument("--source", default="")
     ap.add_argument("--bg", default=os.path.join(HERE, "assets", "bg_4k.png"))
     ap.add_argument("--out")

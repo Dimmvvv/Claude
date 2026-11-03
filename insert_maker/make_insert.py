@@ -37,6 +37,9 @@ def detect_layout(img):
     a = np.asarray(img.convert("RGB")).astype(np.int16)
     bg = np.median(a.reshape(-1, 3)[:: max(1, a.size // 300000)], 0)
     ink = np.abs(a - bg).max(2) > 70
+    # рамки скриншота (линия на всю высоту/ширину) — не текст
+    ink[:, ink.mean(0) > 0.9] = False
+    ink[ink.mean(1) > 0.9, :] = False
     rows = ink.sum(1)
     runs, s = [], None
     for y, v in enumerate(rows > 0):

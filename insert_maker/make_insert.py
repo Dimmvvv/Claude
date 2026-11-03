@@ -25,7 +25,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 W, H = 3840, 2160
 
-HL_COLOR = np.array([206, 195, 244], np.float32)   # фиолетовый маркер из референса
+def _brand_highlight():
+    """Цвет маркера из brand/tokens.json: жёлтый с прозрачностью 40% поверх белого.
+    Накладывается умножением, поэтому тёмный текст под маркером не светлеет."""
+    import json
+    try:
+        tk = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "brand", "tokens.json"), encoding="utf-8"))
+        hx = tk["color"][tk["highlight"]["color"]]["hex"].lstrip("#")
+        a = float(tk["highlight"]["opacity"])
+        rgb = np.array([int(hx[i:i + 2], 16) for i in (0, 2, 4)], np.float32)
+        return 255 * (1 - a) + rgb * a
+    except Exception:
+        return np.array([206, 195, 244], np.float32)   # запасной: фиолетовый из референса
+
+
+HL_COLOR = _brand_highlight()
 CAPTION_LABEL = (114, 119, 143)
 CAPTION_TEXT = (178, 181, 206)
 INTER = "/usr/share/fonts/opentype/inter/Inter-Regular.otf"

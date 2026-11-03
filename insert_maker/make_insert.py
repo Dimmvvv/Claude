@@ -225,8 +225,6 @@ def build(args):
     # размер карточки в финале
     max_w, max_h = W * args.card_w, H * 0.66
     K = min(max_w / shot.width, max_h / shot.height)
-    if getattr(args, "k_override", None):          # масштаб задаёт вызывающий (make_scroll)
-        K = args.k_override
     cw, ch = round(shot.width * K), round(shot.height * K)
     A = shot.resize((cw, ch), Image.LANCZOS)
     global FONT_STYLE
@@ -462,8 +460,7 @@ def build(args):
         out.paste(cimg, (x0, y0), am)
         return out
 
-    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, ratio=ratio, K=K, cw=cw, ch=ch,
-                             card_img=card_img, card_state=card_state, hl_rects=hl_rects)
+    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, ratio=ratio)
 
 
 # ---------------------------------------------------------------- render

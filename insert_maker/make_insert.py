@@ -35,11 +35,14 @@ INTER_LIGHT = "/usr/share/fonts/opentype/inter/Inter-Light.otf"
 # ---------------------------------------------------------------- detection
 def detect_layout(img):
     a = np.asarray(img.convert("RGB")).astype(np.int16)
-    bg = np.median(a.reshape(-1, 3)[:: max(1, a.size // 300000)], 0)
+    # фон = самый частый цвет (медиана ломается, если на скриншоте большое фото)
+    smp = a.reshape(-1, 3)[:: max(1, a.size // 300000)] // 4
+    vals, cnt = np.unique(smp, axis=0, return_counts=True)
+    bg = vals[np.argmax(cnt)] * 4 + 2
     ink = np.abs(a - bg).max(2) > 70
     # рамки скриншота (линия на всю высоту/ширину) — не текст
-    ink[:, ink.mean(0) > 0.9] = False
-    ink[ink.mean(1) > 0.9, :] = False
+    ink[:, ink.mean(0) > 0.8] = False
+    ink[ink.mean(1) > 0.8, :] = False
     rows = ink.sum(1)
     runs, s = [], None
     for y, v in enumerate(rows > 0):
@@ -111,7 +114,17 @@ def draw_detect(img, info, path):
 
 
 # ---------------------------------------------------------------- text layout
+FONT_STYLE = "serif"
+SANS = {"sans": ("Inter-Regular.otf", "Inter-Italic.otf"),
+        "sans-bold": ("InterDisplay-Bold.otf", "InterDisplay-BoldItalic.otf")}
+
+
 def load_fonts(size):
+    if FONT_STYLE in SANS:
+        d = "/usr/share/fonts/opentype/inter/"
+        r = ImageFont.truetype(d + SANS[FONT_STYLE][0], size)
+        i = ImageFont.truetype(d + SANS[FONT_STYLE][1], size)
+        return {("cyr", False): r, ("lat", False): r, ("cyr", True): i, ("lat", True): i}
     def f(n):
         return ImageFont.truetype(os.path.join(FONTS, f"source-serif-4-{n}.woff"), size)
     return {("cyr", False): f("cyrillic-400-normal"), ("lat", False): f("latin-400-normal"),
@@ -183,6 +196,11 @@ def ease_out(t):
     return 1 - (1 - t) ** 3
 
 
+def ease_out_back(t, c=1.7):
+    t = min(max(t, 0.0), 1.0)
+    return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2
+
+
 def parse_sel(sel, lines):
     m = re.fullmatch(r"(\d+):(-?\d+)-(\d+):(-?\d+)", sel.strip())
     if not m:
@@ -209,56 +227,66 @@ def build(args):
     K = min(max_w / shot.width, max_h / shot.height)
     cw, ch = round(shot.width * K), round(shot.height * K)
     A = shot.resize((cw, ch), Image.LANCZOS)
-    hmed = info["hmed"]
-    pad = 0.10 * hmed
+    global FONT_STYLE
+    FONT_STYLE = args.font
+    probe = load_fonts(200)
+    asc_box = probe[("lat", False)].getbbox("dlfhk", anchor="ls")
+    cap_h = -asc_box[1] / 200
 
-    # прямоугольники выделения (в координатах скриншота) и «слоты» для перевода
-    hl_rects, slots_all, words_all = [], [], []
+    # прямоугольники выделения (в координатах скриншота) и «слоты» для перевода;
+    # размеры берём по самим выделенным строкам (заголовок крупнее текста)
+    hl_rects, slots_all, words_all, size0s, sel_m = [], [], [], [], []
     for (L0, W0, L1, W1), ru in zip(parsed, rus):
+        sl = lines[L0:L1 + 1]
+        asc_s = float(np.median([l["base"] - l["y0"] for l in sl]))
+        h_s = float(np.median([l["y1"] - l["y0"] for l in sl]))
+        pad_s = 0.10 * h_s
+        left_s = min(l["words"][0][0] for l in sl[1:]) if len(sl) > 1 else sl[0]["words"][0][0]
+        col = [l for l in lines if abs(l["words"][0][0] - left_s) < 0.6 * h_s]
+        right_s = max(l["words"][-1][1] for l in (col or sl))
+        # не дальше, чем доходил сам выделенный текст (+ полстроки запаса)
+        right_s = min(right_s, max(l["words"][-1][1] for l in sl) + 0.5 * h_s)
+        sel_m.append((h_s, pad_s))
         rects = []
         for li in range(L0, L1 + 1):
             l = lines[li]
             ws = l["words"]
             xa = ws[W0][0] if li == L0 else ws[0][0]
             xb = ws[W1][1] if li == L1 else ws[-1][1]
-            top = l["base"] - info["asc"] - 0.12 * hmed
-            bot = l["base"] + 0.34 * hmed
-            rects.append([xa - pad, top, xb + pad, bot])
+            top = l["base"] - asc_s - 0.12 * h_s
+            bot = l["base"] + 0.34 * h_s
+            rects.append([xa - pad_s, top, xb + pad_s, bot])
         hl_rects += rects
         tail_after = W1 < len(lines[L1]["words"]) - 1
         slots = []
         for i, li in enumerate(range(L0, L1 + 1)):
-            x0 = rects[i][0] + pad if i == 0 else info["left"]
-            xmax = (lines[L1]["words"][W1][1] if (li == L1 and tail_after) else info["right"])
+            x0 = rects[i][0] + pad_s if i == 0 else left_s
+            xmax = (lines[L1]["words"][W1][1] if (li == L1 and tail_after) else right_s)
             slots.append((x0 * K, xmax * K + 2))
         slots_all.append(slots)
         words_all.append(tokenize(ru))
+        size0s.append(asc_s * K / cap_h)
 
-    # кегль: как у оригинала, уменьшаем, пока все переводы не влезут (один размер на все)
-    probe = load_fonts(200)
-    asc_box = probe[("lat", False)].getbbox("dlfhk", anchor="ls")
-    cap_h = -asc_box[1] / 200
-    size0 = info["asc"] * K / cap_h
-
-    def fit(words, slots):
-        s = size0
-        while s > size0 * 0.6:
-            if layout(words, load_fonts(round(s)), slots):
-                return s
-            s *= 0.97
+    # кегль: как у оригинала, уменьшаем (одинаково для всех выделений), пока всё не влезет
+    def fit(words, slots, s0):
+        sz = s0
+        while sz > s0 * 0.6:
+            if layout(words, load_fonts(round(sz)), slots):
+                return sz / s0
+            sz *= 0.97
         return None
-    sizes = [fit(w, sl) for w, sl in zip(words_all, slots_all)]
-    if None in sizes:
+    ratios = [fit(w, sl, s0) for w, sl, s0 in zip(words_all, slots_all, size0s)]
+    if None in ratios:
         sys.exit("Перевод не помещается в строки выделения — сократите текст")
-    size = min(sizes)
+    ratio = min(ratios)
     while True:
-        fonts = load_fonts(round(size))
-        lays = [layout(w, fonts, sl) for w, sl in zip(words_all, slots_all)]
+        fonts_all = [load_fonts(round(s0 * ratio)) for s0 in size0s]
+        lays = [layout(w, f, sl) for w, f, sl in zip(words_all, fonts_all, slots_all)]
         if all(lays):
             break
-        size *= 0.98
-    if size < size0 * 0.97:
-        print(f"! перевод уменьшен до {size / size0:.0%} от кегля оригинала, чтобы влезть")
+        ratio *= 0.98
+    if ratio < 0.97:
+        print(f"! перевод уменьшен до {ratio:.0%} от кегля оригинала, чтобы влезть")
 
     # слой с переводом R и области замены
     R = A.copy()
@@ -266,16 +294,16 @@ def build(args):
     ink = info["ink"]
     ru_rects = []
     hi = 0
-    for (L0, W0, L1, W1), lay in zip(parsed, lays):
+    for (L0, W0, L1, W1), lay, fonts, (h_s, pad_s) in zip(parsed, lays, fonts_all, sel_m):
         for i, li in enumerate(range(L0, L1 + 1)):
             r = hl_rects[hi]; hi += 1
             end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
-            x1 = max(r[2] * K, end_ru + pad * K)
+            x1 = max(r[2] * K, end_ru + pad_s * K)
             # нижний край — до конца строки, чтобы закрыть подчёркивания ссылок
-            rect = [r[0] * K, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * hmed) * K]
+            rect = [r[0] * K, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * h_s) * K]
             ru_rects.append(rect)
             dr.rectangle(rect, fill=info["bg"])
-    for (L0, W0, L1, W1), lay in zip(parsed, lays):
+    for (L0, W0, L1, W1), lay, fonts in zip(parsed, lays, fonts_all):
         for i, li in enumerate(range(L0, L1 + 1)):
             base = lines[li]["base"] * K
             for x, w in lay[i]:
@@ -327,6 +355,17 @@ def build(args):
     ImageDraw.Draw(shadow).rounded_rectangle([sh_pad, sh_pad + 0.02 * ch, sh_pad + cw, sh_pad + ch + 0.02 * ch], rad, fill=150)
     shadow = shadow.filter(ImageFilter.GaussianBlur(0.025 * cw))
 
+    sticker = args.intro == "sticker"
+    if sticker:
+        bw = int(0.022 * cw)                       # белая кайма наклейки
+        sw_, sh_ = cw + 2 * bw, ch + 2 * bw
+        st_alpha = Image.new("L", (sw_, sh_), 0)
+        ImageDraw.Draw(st_alpha).rounded_rectangle([0, 0, sw_ - 1, sh_ - 1], rad + bw, fill=255)
+        sp = int(0.07 * cw)
+        st_shadow = Image.new("L", (sw_ + 2 * sp, sh_ + 2 * sp), 0)
+        ImageDraw.Draw(st_shadow).rounded_rectangle([sp, sp, sp + sw_, sp + sh_], rad + bw, fill=165)
+        st_shadow = st_shadow.filter(ImageFilter.GaussianBlur(0.02 * cw))
+
     T = args.duration
     t_hl = (1.0, 1.0 + args.hl_time)
     t_dim = (t_hl[0] + 0.5, t_hl[0] + 1.1)
@@ -370,6 +409,31 @@ def build(args):
         cd.text((x, 100), args.source, font=ImageFont.truetype(INTER, 44), fill=CAPTION_TEXT, anchor="lm")
     t_cap = t_dim
 
+    def frame_sticker(t, img, out):
+        # «шлепок»: масштаб с перелётом, поворот доводится до лёгкого наклона,
+        # тень сначала «приподнята», потом прилипает
+        pop = ease_out_back(t / 0.5)
+        s = (0.95 + 0.05 * (t / T)) * (0.4 + 0.6 * pop)
+        ang = -10 + 8.5 * ease_out(t / 0.6)
+        op = ease_out(t / 0.1)
+        lift = 1 - ease_out(t / 0.55)
+        cx, cy = W / 2, H * (0.52 - 0.02 * (t / T))
+        st = Image.new("RGBA", (sw_, sh_), (255, 255, 255, 0))
+        st.paste((255, 255, 255, 255), (0, 0), st_alpha)
+        st.paste(img, (bw, bw), alpha)
+        w2, h2 = max(2, round(sw_ * s)), max(2, round(sh_ * s))
+        st = st.resize((w2, h2), Image.LANCZOS).rotate(ang, Image.BICUBIC, expand=True)
+        if op < 1:
+            st.putalpha(st.getchannel("A").point(lambda v: int(v * op)))
+        ss = s * (1 + 0.08 * lift)
+        shd = st_shadow.resize((max(2, round(st_shadow.width * ss)), max(2, round(st_shadow.height * ss))),
+                               Image.BILINEAR).rotate(ang, Image.BILINEAR, expand=True)
+        shd = shd.point(lambda v: int(v * op * (0.75 + 0.25 * (1 - lift))))
+        dy = (0.012 + 0.05 * lift) * h2
+        out.paste((0, 0, 0), (round(cx - shd.width / 2), round(cy - shd.height / 2 + dy)), shd)
+        out.paste(st, (round(cx - st.width / 2), round(cy - st.height / 2)), st)
+        return out
+
     def frame(t):
         img = card_img(*card_state(t))
         intro = ease_out(t / 0.8)
@@ -386,6 +450,8 @@ def build(args):
                 lay_ = cap_layer.copy()
                 lay_.putalpha(lay_.getchannel("A").point(lambda v: int(v * ca)))
                 out.paste(lay_, (0, int(1917 + 20 * (1 - ca))), lay_)
+        if sticker:
+            return frame_sticker(t, img, out)
         sw = round((cw + 2 * sh_pad) * s), round((ch + 2 * sh_pad) * s)
         shm = shadow.resize(sw, Image.BILINEAR).point(lambda v: int(v * op))
         out.paste((0, 0, 0), (round(cx - sw[0] / 2), round(cy - sw[1] / 2)), shm)
@@ -394,7 +460,7 @@ def build(args):
         out.paste(cimg, (x0, y0), am)
         return out
 
-    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, size=size, size0=size0)
+    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, ratio=ratio)
 
 
 # ---------------------------------------------------------------- render
@@ -427,6 +493,10 @@ def main():
     ap.add_argument("--ru-time", type=float, default=1.2)
     ap.add_argument("--dim", type=float, default=0.62)
     ap.add_argument("--blur", type=float, default=1.3)
+    ap.add_argument("--font", choices=["serif", "sans", "sans-bold"], default="serif",
+                    help="шрифт перевода: serif (текст с засечками), sans, sans-bold (заголовки)")
+    ap.add_argument("--intro", choices=["fade", "sticker"], default="fade",
+                    help="появление карточки: fade (как в референсе) или sticker (наклейка)")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     args = ap.parse_args()

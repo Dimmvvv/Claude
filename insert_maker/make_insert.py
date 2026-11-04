@@ -299,8 +299,8 @@ def build(args):
             r = hl_rects[hi]; hi += 1
             end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
             x1 = max(r[2] * K, end_ru + pad_s * K)
-            # нижний край — до конца строки, чтобы закрыть подчёркивания ссылок
-            rect = [r[0] * K, r[1] * K, x1, max(r[3], lines[li]["y1"] + 0.04 * h_s) * K]
+            # края — до границ строки, чтобы закрыть подчёркивания ссылок и надстрочные знаки (11th)
+            rect = [r[0] * K, min(r[1], lines[li]["y0"] - 0.04 * h_s) * K, x1, max(r[3], lines[li]["y1"] + 0.04 * h_s) * K]
             ru_rects.append(rect)
             dr.rectangle(rect, fill=info["bg"])
     for (L0, W0, L1, W1), lay, fonts in zip(parsed, lays, fonts_all):

@@ -435,8 +435,30 @@ def build(args):
         out.paste(st, (round(cx - st.width / 2), round(cy - st.height / 2)), st)
         return out
 
+    # листание внутри карточки: длинная страница той же ширины, что и окно (картинка)
+    scroll = None
+    if getattr(args, "scroll_page", None):
+        sp = Image.open(args.scroll_page).convert("RGB")
+        if sp.width != shot.width:
+            sys.exit("--scroll-page должна быть той же ширины, что и картинка-окно")
+        scroll = (sp, args.scroll_from, args.scroll_y, (0.5, 0.5 + args.scroll_time))
+    shift = (scroll[3][1] + 0.15 - t_hl[0]) if scroll else 0.0
+
+    def card_at(t):
+        if scroll and t < scroll[3][1]:
+            sp, y0, y1, (a, b) = scroll
+            p = ease((t - a) / (b - a)); pp = ease((t - 1 / args.fps - a) / (b - a))
+            y = y0 + (y1 - y0) * p
+            img = sp.resize((cw, ch), Image.LANCZOS, box=(0, y, sp.width, y + shot.height))
+            v = abs(p - pp) * abs(y1 - y0) * K            # сдвиг за кадр, пикс. карточки
+            if v > 3:                                     # размытие движения
+                f = min(v / 3, 30)
+                img = img.resize((cw, max(1, int(ch / f))), Image.BILINEAR).resize((cw, ch), Image.BILINEAR)
+            return img
+        return card_img(*card_state(t - shift))
+
     def frame(t):
-        img = card_img(*card_state(t))
+        img = card_at(t)
         intro = ease_out(t / 0.8)
         s = 0.90 + 0.05 * intro + 0.05 * (t / T)
         op = ease_out(t / 0.55)
@@ -461,7 +483,7 @@ def build(args):
         out.paste(cimg, (x0, y0), am)
         return out
 
-    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, ratio=ratio)
+    return frame, info, dict(t_hl=t_hl, t_ru=t_ru, ratio=ratio, shift=shift)
 
 
 # ---------------------------------------------------------------- render
@@ -498,6 +520,10 @@ def main():
                     help="шрифт перевода: serif (текст с засечками), sans, sans-bold (заголовки)")
     ap.add_argument("--intro", choices=["fade", "sticker"], default="fade",
                     help="появление карточки: fade (как в референсе) или sticker (наклейка)")
+    ap.add_argument("--scroll-page", help="длинная страница той же ширины: перед выделением карточка листается по ней")
+    ap.add_argument("--scroll-from", type=float, default=0, help="откуда листать (y верха окна на странице)")
+    ap.add_argument("--scroll-y", type=float, help="где остановиться (y верха окна = картинки на странице)")
+    ap.add_argument("--scroll-time", type=float, default=1.7)
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     args = ap.parse_args()
@@ -516,8 +542,11 @@ def main():
 
     frame, info, meta = build(args)
     if args.preview:
-        ts = [0.2, meta["t_hl"][0] + 0.45, meta["t_hl"][1] + 0.4,
-              (meta["t_ru"][0] + meta["t_ru"][1]) / 2, args.duration - 0.02]
+        sh = meta.get("shift", 0.0)
+        ts = [0.2, meta["t_hl"][0] + 0.45 + sh, meta["t_hl"][1] + 0.4 + sh,
+              (meta["t_ru"][0] + meta["t_ru"][1]) / 2 + sh, args.duration - 0.02]
+        if sh:
+            ts[0] = 0.5 + args.scroll_time * 0.5          # середина листания
         for i, t in enumerate(ts):
             p = f"{stem}_preview_{i}.png"
             frame(t).resize((1920, 1080), Image.LANCZOS).save(p)

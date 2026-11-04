@@ -468,7 +468,7 @@ def build(args):
         x0, y0 = round(cx - w2 / 2), round(cy - h2 / 2)
         out = bg.copy()
         if cap_layer is not None:
-            ca = ease_out((t - t_cap[0]) / 0.6)
+            ca = ease_out((t - shift - t_cap[0]) / 0.6)     # с листанием подпись ждёт остановки
             if ca > 0:
                 lay_ = cap_layer.copy()
                 lay_.putalpha(lay_.getchannel("A").point(lambda v: int(v * ca)))

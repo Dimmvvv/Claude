@@ -221,6 +221,7 @@ def build(args):
     if len(sels) != len(rus):
         sys.exit("Число --sel и --ru должно совпадать: по паре на каждое выделение")
     parsed = [parse_sel(s, lines) for s in sels]
+    no_ru = all(not r.strip() for r in rus)        # --ru '' → только выделение, без замены на перевод
 
     # размер карточки в финале
     max_w, max_h = W * args.card_w, H * 0.66
@@ -375,7 +376,7 @@ def build(args):
         q = lambda v: round(v, 3)
         return (q(ease((t - t_dim[0]) / (t_dim[1] - t_dim[0]))),
                 q(ease((t - t_hl[0]) / (t_hl[1] - t_hl[0]))),
-                q(ease((t - t_ru[0]) / (t_ru[1] - t_ru[0]))))
+                0.0 if no_ru else q(ease((t - t_ru[0]) / (t_ru[1] - t_ru[0]))))
 
     @lru_cache(maxsize=4)
     def card_img(dim, hp, rp):

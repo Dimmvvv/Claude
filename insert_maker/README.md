@@ -28,7 +28,17 @@ python3 make_insert.py examples/adweek.png --sel 7:5-9:-1 --ru 'В октябр�
 - `--source` — подпись «ИСТОЧНИК | …» внизу (необязательно)
 - `--font serif|sans|sans-bold` — шрифт перевода (sans-bold для заголовков)
 - `--intro fade|sticker` — появление карточки: плавно или как наклейка
+- `--format short` — вертикальный Shorts 9:16 (2160×3840)
 - `--preview` — 5 PNG-кадров вместо видео (быстро)
 - `--duration 7`, `--card-w 0.62`, `--hl-time`, `--ru-time`, `--pause`, `--dim`, `--blur`, `--bg`
 
 Фон: `assets/bg_4k.png`. Шрифт перевода: Source Serif 4 (OFL), в `fonts/`.
+
+## Тайминги из озвучки
+
+```bash
+python3 tools/phrases.py voice.m4a --text text.txt --find Парсонс Галецки
+```
+
+Печатает начало каждой фразы и примерное время нужных слов, сохраняет `voice_timing.json`
+и `voice_wave.png` (волна с отметками) для проверки.

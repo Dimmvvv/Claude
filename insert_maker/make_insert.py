@@ -25,6 +25,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 W, H = 3840, 2160
 
+# Форматы кадра. short = Shorts 9:16: карточка в верхней половине (ниже интерфейса YouTube),
+# полоса 55–70% высоты свободна под субтитры, подпись «ИСТОЧНИК» под ней, выше нижних 20%.
+LAYOUTS = {
+    "long":  dict(W=3840, H=2160, card_w=0.62, card_h=0.66, cy=0.545, sticker_cy=0.52,
+                  cap_x=338, cap_y=1917, pill=(280, 150), grid_oy=260),
+    "short": dict(W=2160, H=3840, card_w=0.86, card_h=0.32, cy=0.37, sticker_cy=0.365,
+                  cap_x=338, cap_y=2700, pill=(280, 470), grid_oy=170),
+}
+LAY = LAYOUTS["long"]
+
+
+def set_format(fmt):
+    global W, H, LAY
+    LAY = LAYOUTS[fmt or "long"]
+    W, H = LAY["W"], LAY["H"]
+
 HL_COLOR = np.array([206, 195, 244], np.float32)   # фиолетовый маркер из референса
 CAPTION_LABEL = (114, 119, 143)
 CAPTION_TEXT = (178, 181, 206)
@@ -53,16 +69,40 @@ def _pill_font(size):
     return ImageFont.truetype("/usr/share/fonts/opentype/inter/Inter-Light.otf", size)
 
 
+def _grid_bg(name):
+    """Сетка нашего стиля на цвете палитры под текущий формат (для вертикали)."""
+    import json
+    tk = json.load(open(os.path.join(HERE, "..", "brand", "tokens.json"), encoding="utf-8"))
+    hx = tk["color"][name]["hex"].lstrip("#")
+    base = np.array([int(hx[i:i + 2], 16) for i in (0, 2, 4)], np.float32)
+    dark = base.mean() < 128
+    a = 0.29 if dark else 0.33                       # как у линий на настоящем синем фоне
+    lc = base * (1 - a) + (255 if dark else 0) * a
+    im = Image.new("RGB", (W, H), tuple(int(v) for v in base)); d = ImageDraw.Draw(im)
+    step, lw = 410, 2
+    for x in range(278 % step, W, step):
+        d.rectangle([x, 0, x + lw - 1, H], fill=tuple(int(v) for v in lc))
+    for y in range(LAY["grid_oy"] % step, H, step):
+        d.rectangle([0, y, W, y + lw - 1], fill=tuple(int(v) for v in lc))
+    return im
+
+
 def load_bg(v, title=None):
-    """Фон 4K. title=None — как есть (у фонов-цветов плашка «Теория Большого взрыва»);
+    """Фон под текущий формат. title=None — как есть (у фонов-цветов плашка «Теория Большого взрыва»);
     title='Друзья' — та же сетка, плашка с этим названием; title='' — без плашки."""
     if v == "chroma":                       # хромакей: ровный зелёный, без сетки и плашки
         return Image.new("RGB", (W, H), CHROMA)
-    if title is not None and v in BG_NAMES:
-        v = "grid-" + v
-    bg = Image.open(resolve_bg(v)).convert("RGB")
-    if bg.size != (W, H):
-        bg = bg.resize((W, H), Image.LANCZOS)
+    name = v[5:] if v.startswith("grid-") else v
+    if LAY is not LAYOUTS["long"] and name in BG_NAMES:     # вертикаль: собираем сетку и плашку сами
+        bg = _grid_bg(name)
+        if title is None and not v.startswith("grid-"):
+            title = "Теория Большого взрыва"
+    else:
+        if title is not None and v in BG_NAMES:
+            v = "grid-" + v
+        bg = Image.open(resolve_bg(v)).convert("RGB")
+        if bg.size != (W, H):
+            bg = bg.resize((W, H), Image.LANCZOS)
     if title:
         dark = sum(bg.getpixel((600, 1500))) / 3 < 128
         ink = (255, 255, 255) if dark else (0, 0, 0)
@@ -70,7 +110,7 @@ def load_bg(v, title=None):
         probe = _pill_font(100); cap = probe.getbbox("Т")[3] - probe.getbbox("Т")[1]
         f = _pill_font(round(100 * 45 / cap))            # высота прописной как на макете
         tw = f.getlength(title)
-        x0, y0, h, padx = 280, 150, 110, 55
+        (x0, y0), h, padx = LAY["pill"], 110, 55
         d.rounded_rectangle([x0, y0, x0 + tw + 2 * padx, y0 + h], h // 2,
                             outline=ink + (int(255 * (0.30 if dark else 0.38)),), width=2)
         d.text((x0 + padx, y0 + h / 2), title, font=f, fill=ink + (int(255 * (0.48 if dark else 0.55)),), anchor="lm")
@@ -308,6 +348,7 @@ def parse_sel(sel, lines):
 
 
 def build(args):
+    set_format(getattr(args, "format", "long"))
     shot = Image.open(args.image).convert("RGB")
     info = detect_layout(shot)
     lines = info["lines"]
@@ -319,7 +360,7 @@ def build(args):
     no_ru = all(not r.strip() for r in rus)        # --ru '' → только выделение, без замены на перевод
 
     # размер карточки в финале
-    max_w, max_h = W * args.card_w, H * 0.66
+    max_w, max_h = W * (args.card_w or LAY["card_w"]), H * LAY["card_h"]
     K = min(max_w / shot.width, max_h / shot.height)
     cw, ch = round(shot.width * K), round(shot.height * K)
     A = shot.resize((cw, ch), Image.LANCZOS)
@@ -497,7 +538,7 @@ def build(args):
         cap_layer = Image.new("RGBA", (W, 200), (0, 0, 0, 0))
         cd = ImageDraw.Draw(cap_layer)
         fl = ImageFont.truetype(body_font_path(), 34)
-        x = 338
+        x = LAY["cap_x"]
         for chh in "ИСТОЧНИК":
             cd.text((x, 100), chh, font=fl, fill=cap_label, anchor="lm")
             x += fl.getlength(chh) + 6
@@ -515,7 +556,7 @@ def build(args):
         ang = -10 * (1 - ease_out(t / 0.6))      # доворачивается до ровного положения
         op = ease_out(t / 0.1)
         lift = 1 - ease_out(t / 0.55)
-        cx, cy = W / 2, H * (0.52 - 0.02 * (t / T))
+        cx, cy = W / 2, H * (LAY["sticker_cy"] - 0.02 * (t / T))
         st = Image.new("RGBA", (sw_, sh_), (255, 255, 255, 0))
         st.paste((255, 255, 255, 255), (0, 0), st_alpha)
         st.paste(img, (bw, bw), alpha)
@@ -562,7 +603,7 @@ def build(args):
         op = ease_out(t / 0.55)
         w2, h2 = round(cw * s), round(ch * s)
         cx = W / 2
-        cy = H * (0.545 - 0.025 * intro - 0.02 * (t / T))
+        cy = H * (LAY["cy"] - 0.025 * intro - 0.02 * (t / T))
         x0, y0 = round(cx - w2 / 2), round(cy - h2 / 2)
         out = bg.copy()
         if cap_layer is not None:
@@ -570,7 +611,7 @@ def build(args):
             if ca > 0:
                 lay_ = cap_layer.copy()
                 lay_.putalpha(lay_.getchannel("A").point(lambda v: int(v * ca)))
-                out.paste(lay_, (0, int(1917 + 20 * (1 - ca))), lay_)
+                out.paste(lay_, (0, int(LAY["cap_y"] + 20 * (1 - ca))), lay_)
         if sticker:
             return frame_sticker(t, img, out)
         sw = round((cw + 2 * sh_pad) * s), round((ch + 2 * sh_pad) * s)
@@ -610,7 +651,9 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--duration", type=float, default=7.0)
     ap.add_argument("--fps", type=int, default=60)
-    ap.add_argument("--card-w", type=float, default=0.62)
+    ap.add_argument("--card-w", type=float, default=None, help="ширина карточки, доля кадра (по умолчанию от формата)")
+    ap.add_argument("--format", choices=["long", "short"], default="long",
+                    help="long — 16:9 3840×2160; short — Shorts 9:16 2160×3840 (безопасные зоны, место под субтитры)")
     ap.add_argument("--hl-time", type=float, default=0.9)
     ap.add_argument("--pause", type=float, default=0.9)
     ap.add_argument("--ru-time", type=float, default=1.2)
@@ -629,6 +672,7 @@ def main():
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     args = ap.parse_args()
+    set_format(args.format)
     stem = os.path.splitext(args.image)[0]
 
     if args.detect:
@@ -651,7 +695,7 @@ def main():
             ts[0] = 0.5 + args.scroll_time * 0.5          # середина листания
         for i, t in enumerate(ts):
             p = f"{stem}_preview_{i}.png"
-            frame(t).resize((1920, 1080), Image.LANCZOS).save(p)
+            frame(t).resize((W // 2, H // 2), Image.LANCZOS).save(p)
             print("->", p, f"t={t:.2f}")
         return
 

@@ -17,6 +17,7 @@ scene.json:
 }
 face.crop = [cx, cy, r] круга на фото; face.at = [x, y] центра на скриншоте (y=null — по центру выделения);
 face.d — диаметр в пикселях скриншота (по умолчанию 300); face.rot — наклон в покое.
+"format": "short" — Shorts 9:16 (2160×3840); "bg", "title" — фон и плашка, как в make_insert.
 """
 import json, math, os, sys, subprocess
 import numpy as np
@@ -31,12 +32,16 @@ FPS = 30
 
 
 def build(cfg):
+    global W, H
+    mi.set_format(cfg.get("format", "long")); W, H = mi.W, mi.H
+    LAY = mi.LAY
     shot = Image.open(cfg["image"]).convert("RGB")
     info = mi.detect_layout(shot)
     lines = info["lines"]
     T = cfg["duration"]
 
-    K = min(W * cfg.get("card_w", 0.62) / shot.width, H * cfg.get("card_h", 0.78) / shot.height)
+    K = min(W * cfg.get("card_w", LAY["card_w"]) / shot.width,
+            H * cfg.get("card_h", 0.78 if cfg.get("format", "long") == "long" else LAY["card_h"]) / shot.height)
     cw, ch = round(shot.width * K), round(shot.height * K)
     A = np.asarray(shot.resize((cw, ch), Image.LANCZOS), np.float32)
     bgc = np.array(info["bg"], np.float32)
@@ -155,7 +160,7 @@ def build(cfg):
     cap = None
     if cfg.get("source"):
         cap = Image.new("RGBA", (W, 200), (0, 0, 0, 0)); cd = ImageDraw.Draw(cap)
-        fl = ImageFont.truetype(mi.body_font_path(), 34); x = 338
+        fl = ImageFont.truetype(mi.body_font_path(), 34); x = LAY["cap_x"]
         for c in "ИСТОЧНИК":
             cd.text((x, 100), c, font=fl, fill=cap_label, anchor="lm"); x += fl.getlength(c) + 6
         x += 28; cd.line([x, 70, x, 130], fill=cap_line, width=2); x += 32
@@ -168,14 +173,14 @@ def build(cfg):
             ca = mi.ease_out((t - t_cap) / 0.6)
             if ca > 0:
                 c = cap.copy(); c.putalpha(c.getchannel("A").point(lambda v: int(v * ca)))
-                out.paste(c, (0, int(1917 + 20 * (1 - ca))), c)
+                out.paste(c, (0, int(LAY["cap_y"] + 20 * (1 - ca))), c)
         img = card(t)
         pop = mi.ease_out_back(t / 0.5)
         s = (0.95 + 0.05 * (t / T)) * (0.4 + 0.6 * pop)
         ang = -10 * (1 - mi.ease_out(t / 0.6))
         op = mi.ease_out(t / 0.1)
         lift = 1 - mi.ease_out(t / 0.55)
-        cx, cy = W / 2, H * (0.52 - 0.02 * (t / T))
+        cx, cy = W / 2, H * (LAY["sticker_cy"] - 0.02 * (t / T))
         st = Image.new("RGBA", (sw_, sh_), (255, 255, 255, 0))
         st.paste((255, 255, 255, 255), (0, 0), st_alpha)
         st.paste(img, (bw, bw), alpha)
@@ -214,12 +219,14 @@ def _render(t):
 def main():
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
     T = cfg["duration"]
+    global W, H
+    mi.set_format(cfg.get("format", "long")); W, H = mi.W, mi.H
     stem = os.path.splitext(cfg.get("out", sys.argv[1]))[0]
     if "--preview" in sys.argv:
         frame = build(cfg)
         ts = [0.3] + [st["t"] + 0.9 for st in cfg["steps"]] + [T - 0.05]
         for i, t in enumerate(ts):
-            p = f"{stem}_preview_{i}.png"; frame(t).resize((1920, 1080), Image.LANCZOS).save(p); print("->", p, f"t={t:.2f}")
+            p = f"{stem}_preview_{i}.png"; frame(t).resize((W // 2, H // 2), Image.LANCZOS).save(p); print("->", p, f"t={t:.2f}")
         return
     n = int(round(T * FPS))
     ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",

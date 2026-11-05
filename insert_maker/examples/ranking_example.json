@@ -1,0 +1,11 @@
+{
+  "image": "work/forbes_top_p.png", "duration": 18, "source": "Forbes", "out": "work/forbes_ranking.mp4",
+  "dim_at": 5.6, "pulse_at": 15.3,
+  "steps": [
+    {"t": 1.0,  "sel": "1:1-1:-1"},
+    {"t": 6.0,  "sel": "5:1-7:-1",  "face": {"img": "work/faces/parsons.jpg", "crop": [360,290,300], "at": [980, null],  "rot": -4}},
+    {"t": 9.5,  "sel": "8:1-10:-1", "face": {"img": "work/faces/galecki.jpg", "crop": [392,172,170], "at": [1250, null], "rot": 5}},
+    {"t": 13.0, "sel": "17:1-19:-1","face": {"img": "work/faces/helberg.jpg", "crop": [172,128,98],  "at": [980, null],  "rot": 4}},
+    {"t": 13.7, "sel": "20:1-22:-1","face": {"img": "work/faces/nayyar.jpg",  "crop": [224,205,165], "at": [1250, null], "rot": -5}}
+  ]
+}

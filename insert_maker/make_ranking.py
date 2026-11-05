@@ -149,7 +149,7 @@ def build(cfg):
     ImageDraw.Draw(st_shadow).rounded_rectangle([sp, sp, sp + sw_, sp + sh_], rad + bw, fill=165)
     st_shadow = st_shadow.filter(ImageFilter.GaussianBlur(0.02 * cw))
 
-    bg = Image.open(mi.resolve_bg(cfg.get("bg", os.path.join(HERE, "assets", "bg_4k.png")))).convert("RGB")
+    bg = mi.load_bg(cfg.get("bg", "blue"), cfg.get("title"))
     cap_label, cap_text, cap_line = mi.caption_colors(bg)
     cap = None
     if cfg.get("source"):

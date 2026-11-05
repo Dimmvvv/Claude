@@ -41,6 +41,40 @@ def resolve_bg(v):
     return v
 
 
+def _pill_font(size):
+    """Шрифт плашки: Gilroy из brand/fonts (если положен локально), иначе Inter Light."""
+    import glob
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "brand", "fonts")
+    for pat in ("Gilroy-Light.*", "Gilroy-Regular.*", "Gilroy*Light*", "Gilroy*Regular*"):
+        for f in sorted(glob.glob(os.path.join(root, pat))):
+            if f.lower().endswith((".ttf", ".otf", ".woff")):
+                return ImageFont.truetype(f, size)
+    return ImageFont.truetype("/usr/share/fonts/opentype/inter/Inter-Light.otf", size)
+
+
+def load_bg(v, title=None):
+    """Фон 4K. title=None — как есть (у фонов-цветов плашка «Теория Большого взрыва»);
+    title='Друзья' — та же сетка, плашка с этим названием; title='' — без плашки."""
+    if title is not None and v in BG_NAMES:
+        v = "grid-" + v
+    bg = Image.open(resolve_bg(v)).convert("RGB")
+    if bg.size != (W, H):
+        bg = bg.resize((W, H), Image.LANCZOS)
+    if title:
+        dark = sum(bg.getpixel((600, 1500))) / 3 < 128
+        ink = (255, 255, 255) if dark else (0, 0, 0)
+        ov = Image.new("RGBA", bg.size, (0, 0, 0, 0)); d = ImageDraw.Draw(ov)
+        probe = _pill_font(100); cap = probe.getbbox("Т")[3] - probe.getbbox("Т")[1]
+        f = _pill_font(round(100 * 45 / cap))            # высота прописной как на макете
+        tw = f.getlength(title)
+        x0, y0, h, padx = 280, 150, 110, 55
+        d.rounded_rectangle([x0, y0, x0 + tw + 2 * padx, y0 + h], h // 2,
+                            outline=ink + (int(255 * (0.30 if dark else 0.38)),), width=2)
+        d.text((x0 + padx, y0 + h / 2), title, font=f, fill=ink + (int(255 * (0.48 if dark else 0.55)),), anchor="lm")
+        bg = Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
+    return bg
+
+
 def caption_colors(bg_img):
     """Цвета подписи «ИСТОЧНИК»: на светлом фоне — тёмные."""
     if sum(bg_img.getpixel((600, 1500))) / 3 > 128:
@@ -410,7 +444,7 @@ def build(args):
         return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
 
     # фон и подпись
-    bg = Image.open(resolve_bg(args.bg)).convert("RGB")
+    bg = load_bg(args.bg, args.title)
     cap_label, cap_text, cap_line = caption_colors(bg)
     if bg.size != (W, H):
         bg = bg.resize((W, H), Image.LANCZOS)
@@ -536,6 +570,8 @@ def main():
     ap.add_argument("--ru-time", type=float, default=1.2)
     ap.add_argument("--dim", type=float, default=0.62)
     ap.add_argument("--blur", type=float, default=1.3)
+    ap.add_argument("--title", default=None,
+                    help="название в плашке (сериал/фильм); '' — без плашки; не задано — «Теория Большого взрыва»")
     ap.add_argument("--font", choices=["serif", "sans", "sans-bold"], default="serif",
                     help="шрифт перевода: serif (текст с засечками), sans, sans-bold (заголовки)")
     ap.add_argument("--intro", choices=["fade", "sticker"], default="fade",

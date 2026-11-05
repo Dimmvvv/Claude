@@ -29,6 +29,7 @@ HL_COLOR = np.array([206, 195, 244], np.float32)   # фиолетовый мар
 CAPTION_LABEL = (114, 119, 143)
 CAPTION_TEXT = (178, 181, 206)
 BG_NAMES = ("blue", "red", "brown", "green", "beige")
+CHROMA = (0, 177, 64)                       # стандартный зелёный хромакей (CapCut → «Хромакей»)
 
 
 def resolve_bg(v):
@@ -55,6 +56,8 @@ def _pill_font(size):
 def load_bg(v, title=None):
     """Фон 4K. title=None — как есть (у фонов-цветов плашка «Теория Большого взрыва»);
     title='Друзья' — та же сетка, плашка с этим названием; title='' — без плашки."""
+    if v == "chroma":                       # хромакей: ровный зелёный, без сетки и плашки
+        return Image.new("RGB", (W, H), CHROMA)
     if title is not None and v in BG_NAMES:
         v = "grid-" + v
     bg = Image.open(resolve_bg(v)).convert("RGB")
@@ -485,6 +488,7 @@ def build(args):
 
     # фон и подпись
     bg = load_bg(args.bg, args.title)
+    chroma = args.bg == "chroma"
     cap_label, cap_text, cap_line = caption_colors(bg)
     if bg.size != (W, H):
         bg = bg.resize((W, H), Image.LANCZOS)
@@ -524,7 +528,8 @@ def build(args):
                                Image.BILINEAR).rotate(ang, Image.BILINEAR, expand=True)
         shd = shd.point(lambda v: int(v * op * (0.75 + 0.25 * (1 - lift))))
         dy = (0.012 + 0.05 * lift) * h2
-        out.paste((0, 0, 0), (round(cx - shd.width / 2), round(cy - shd.height / 2 + dy)), shd)
+        if not chroma:                              # на хромакее тени дают грязный край при кеинге
+            out.paste((0, 0, 0), (round(cx - shd.width / 2), round(cy - shd.height / 2 + dy)), shd)
         out.paste(st, (round(cx - st.width / 2), round(cy - st.height / 2)), st)
         return out
 
@@ -570,7 +575,8 @@ def build(args):
             return frame_sticker(t, img, out)
         sw = round((cw + 2 * sh_pad) * s), round((ch + 2 * sh_pad) * s)
         shm = shadow.resize(sw, Image.BILINEAR).point(lambda v: int(v * op))
-        out.paste((0, 0, 0), (round(cx - sw[0] / 2), round(cy - sw[1] / 2)), shm)
+        if not chroma:
+            out.paste((0, 0, 0), (round(cx - sw[0] / 2), round(cy - sw[1] / 2)), shm)
         cimg = img.resize((w2, h2), Image.LANCZOS)
         am = alpha.resize((w2, h2), Image.BILINEAR).point(lambda v: int(v * op))
         out.paste(cimg, (x0, y0), am)
@@ -600,7 +606,7 @@ def main():
     ap.add_argument("--ru", action="append")
     ap.add_argument("--source", default="")
     ap.add_argument("--bg", default="blue",
-                    help="фон: blue/red/brown/green/beige (с плашкой), grid-<цвет> (без плашки) или путь")
+                    help="фон: blue/red/brown/green/beige (с плашкой), grid-<цвет> (без плашки), chroma (зелёный хромакей) или путь")
     ap.add_argument("--out")
     ap.add_argument("--duration", type=float, default=7.0)
     ap.add_argument("--fps", type=int, default=60)

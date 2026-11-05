@@ -150,6 +150,7 @@ def build(cfg):
     st_shadow = st_shadow.filter(ImageFilter.GaussianBlur(0.02 * cw))
 
     bg = mi.load_bg(cfg.get("bg", "blue"), cfg.get("title"))
+    chroma = cfg.get("bg") == "chroma"
     cap_label, cap_text, cap_line = mi.caption_colors(bg)
     cap = None
     if cfg.get("source"):
@@ -190,7 +191,8 @@ def build(cfg):
             shd = shd.rotate(ang, Image.BILINEAR, expand=True)
         shd = shd.point(lambda v: int(v * op * (0.75 + 0.25 * (1 - lift))))
         dy = (0.012 + 0.05 * lift) * h2
-        out.paste((0, 0, 0), (round(cx - shd.width / 2), round(cy - shd.height / 2 + dy)), shd)
+        if not chroma:
+            out.paste((0, 0, 0), (round(cx - shd.width / 2), round(cy - shd.height / 2 + dy)), shd)
         out.paste(st, (round(cx - st.width / 2), round(cy - st.height / 2)), st)
         return out
 

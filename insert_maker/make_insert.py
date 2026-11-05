@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
+INTER_DIR = os.path.join(FONTS, "inter")          # Inter (OFL) лежит в репозитории — работает на Mac и Linux
 W, H = 3840, 2160
 
 # Форматы кадра. short = Shorts 9:16: карточка в верхней половине (ниже интерфейса YouTube),
@@ -66,7 +67,7 @@ def _pill_font(size):
         for f in sorted(glob.glob(os.path.join(root, pat))):
             if f.lower().endswith((".ttf", ".otf", ".woff")):
                 return ImageFont.truetype(f, size)
-    return ImageFont.truetype("/usr/share/fonts/opentype/inter/Inter-Light.otf", size)
+    return ImageFont.truetype(os.path.join(INTER_DIR, "Inter-Light.otf"), size)
 
 
 def _grid_bg(name):
@@ -123,8 +124,8 @@ def caption_colors(bg_img):
     if sum(bg_img.getpixel((600, 1500))) / 3 > 128:
         return (120, 114, 102), (60, 56, 48), (190, 184, 170)
     return CAPTION_LABEL, CAPTION_TEXT, (60, 64, 96)
-INTER = "/usr/share/fonts/opentype/inter/Inter-Regular.otf"
-INTER_LIGHT = "/usr/share/fonts/opentype/inter/Inter-Light.otf"
+INTER = os.path.join(INTER_DIR, "Inter-Regular.otf")
+INTER_LIGHT = os.path.join(INTER_DIR, "Inter-Light.otf")
 
 
 # ---------------------------------------------------------------- detection
@@ -244,7 +245,7 @@ def available_fonts():
 def load_fonts(size):
     sp = _font_spec(FONT_STYLE)
     if sp[0] == "sys":
-        d = "/usr/share/fonts/opentype/inter/"
+        d = INTER_DIR + os.sep
         r = ImageFont.truetype(d + SANS[sp[1]][0], size)
         i = ImageFont.truetype(d + SANS[sp[1]][1], size)
         return {("cyr", False): r, ("lat", False): r, ("cyr", True): i, ("lat", True): i}

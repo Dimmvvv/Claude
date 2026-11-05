@@ -124,7 +124,7 @@ def main():
     wav = waveform(a.audio, T)
     Wd, Hd = len(wav), 260
     im = Image.new("RGB", (Wd, Hd), (250, 250, 250)); d = ImageDraw.Draw(im)
-    f = ImageFont.truetype("/usr/share/fonts/opentype/inter/Inter-Regular.otf", 13)
+    f = ImageFont.truetype(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts", "inter", "Inter-Regular.otf"), 13)
     for s, e in segs:
         d.rectangle([s / T * Wd, 0, e / T * Wd, Hd], fill=(226, 236, 250))
     mx = wav.max() or 1

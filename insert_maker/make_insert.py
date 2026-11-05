@@ -171,16 +171,56 @@ SANS = {"sans": ("Inter-Regular.otf", "Inter-Italic.otf"),
         "sans-bold": ("InterDisplay-Bold.otf", "InterDisplay-BoldItalic.otf")}
 
 
+# Шрифты перевода: подбирай похожий на шрифт статьи. Файлы — fonts/<семейство>-<cyrillic|latin>-<вес>-<normal|italic>.woff
+FONT_ALIASES = {
+    "serif": "source-serif-4",       # универсальная антиква (THR, Variety-текст, большинство газет)
+    "georgia": "pt-serif",           # Georgia-подобная (Forbes, NYT-текст, WSJ)
+    "garamond": "eb-garamond", "didone": "playfair-display",   # классика / крупные заголовки-контраст
+    "slab": "roboto-slab",
+    "helvetica": "roboto", "arial": "roboto",
+    "grotesk": "pt-sans",
+}
+
+
+def _font_spec(spec):
+    """'pt-serif' / 'pt-serif:700' / 'georgia' / 'sans' -> ('woff', семейство, вес) или ('sys', имя)"""
+    fam, _, w = spec.partition(":")
+    fam = FONT_ALIASES.get(fam, fam)
+    if fam in SANS:
+        return ("sys", fam)
+    return ("woff", fam, int(w or 400))
+
+
+def available_fonts():
+    import glob, re
+    fams = sorted({re.sub(r"-(cyrillic|latin)-\d+-(normal|italic)\.woff$", "", os.path.basename(f))
+                   for f in glob.glob(os.path.join(FONTS, "*-cyrillic-*.woff"))})
+    return fams + sorted(SANS) + sorted(FONT_ALIASES)
+
+
 def load_fonts(size):
-    if FONT_STYLE in SANS:
+    sp = _font_spec(FONT_STYLE)
+    if sp[0] == "sys":
         d = "/usr/share/fonts/opentype/inter/"
-        r = ImageFont.truetype(d + SANS[FONT_STYLE][0], size)
-        i = ImageFont.truetype(d + SANS[FONT_STYLE][1], size)
+        r = ImageFont.truetype(d + SANS[sp[1]][0], size)
+        i = ImageFont.truetype(d + SANS[sp[1]][1], size)
         return {("cyr", False): r, ("lat", False): r, ("cyr", True): i, ("lat", True): i}
-    def f(n):
-        return ImageFont.truetype(os.path.join(FONTS, f"source-serif-4-{n}.woff"), size)
-    return {("cyr", False): f("cyrillic-400-normal"), ("lat", False): f("latin-400-normal"),
-            ("cyr", True): f("cyrillic-400-italic"), ("lat", True): f("latin-400-italic")}
+    _, fam, w = sp
+
+    def f(sub, style):
+        for st in (style, "normal"):                     # нет курсива — берём прямой
+            p = os.path.join(FONTS, f"{fam}-{sub}-{w}-{st}.woff")
+            if os.path.exists(p):
+                return ImageFont.truetype(p, size)
+        sys.exit(f"Нет шрифта {fam} ({w}). Доступно: {', '.join(available_fonts())}")
+    return {("cyr", False): f("cyrillic", "normal"), ("lat", False): f("latin", "normal"),
+            ("cyr", True): f("cyrillic", "italic"), ("lat", True): f("latin", "italic")}
+
+
+def body_font_path():
+    """Фирменный базовый шрифт (Gilroy Regular из brand/fonts), иначе Inter."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "brand", "fonts", "Gilroy-Regular.ttf")
+    return p if os.path.exists(p) else INTER
 
 
 def is_cyr(ch):
@@ -452,7 +492,7 @@ def build(args):
     if args.source:
         cap_layer = Image.new("RGBA", (W, 200), (0, 0, 0, 0))
         cd = ImageDraw.Draw(cap_layer)
-        fl = ImageFont.truetype(INTER, 34)
+        fl = ImageFont.truetype(body_font_path(), 34)
         x = 338
         for chh in "ИСТОЧНИК":
             cd.text((x, 100), chh, font=fl, fill=cap_label, anchor="lm")
@@ -460,7 +500,7 @@ def build(args):
         x += 28
         cd.line([x, 70, x, 130], fill=cap_line, width=2)
         x += 32
-        cd.text((x, 100), args.source, font=ImageFont.truetype(INTER, 44), fill=cap_text, anchor="lm")
+        cd.text((x, 100), args.source, font=ImageFont.truetype(body_font_path(), 44), fill=cap_text, anchor="lm")
     t_cap = t_dim
 
     def frame_sticker(t, img, out):
@@ -559,7 +599,7 @@ def main():
     ap.add_argument("--sel", action="append")
     ap.add_argument("--ru", action="append")
     ap.add_argument("--source", default="")
-    ap.add_argument("--bg", default=os.path.join(HERE, "assets", "bg_4k.png"),
+    ap.add_argument("--bg", default="blue",
                     help="фон: blue/red/brown/green/beige (с плашкой), grid-<цвет> (без плашки) или путь")
     ap.add_argument("--out")
     ap.add_argument("--duration", type=float, default=7.0)
@@ -572,8 +612,8 @@ def main():
     ap.add_argument("--blur", type=float, default=1.3)
     ap.add_argument("--title", default=None,
                     help="название в плашке (сериал/фильм); '' — без плашки; не задано — «Теория Большого взрыва»")
-    ap.add_argument("--font", choices=["serif", "sans", "sans-bold"], default="serif",
-                    help="шрифт перевода: serif (текст с засечками), sans, sans-bold (заголовки)")
+    ap.add_argument("--font", default="serif",
+                    help="шрифт перевода: семейство из fonts/ (pt-serif, lora, roboto, montserrat:700 …) или псевдоним serif/georgia/sans/sans-bold")
     ap.add_argument("--intro", choices=["fade", "sticker"], default="fade",
                     help="появление карточки: fade (как в референсе) или sticker (наклейка)")
     ap.add_argument("--scroll-page", help="длинная страница той же ширины: перед выделением карточка листается по ней")

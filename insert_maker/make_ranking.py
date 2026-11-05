@@ -154,11 +154,11 @@ def build(cfg):
     cap = None
     if cfg.get("source"):
         cap = Image.new("RGBA", (W, 200), (0, 0, 0, 0)); cd = ImageDraw.Draw(cap)
-        fl = ImageFont.truetype(mi.INTER, 34); x = 338
+        fl = ImageFont.truetype(mi.body_font_path(), 34); x = 338
         for c in "ИСТОЧНИК":
             cd.text((x, 100), c, font=fl, fill=cap_label, anchor="lm"); x += fl.getlength(c) + 6
         x += 28; cd.line([x, 70, x, 130], fill=cap_line, width=2); x += 32
-        cd.text((x, 100), cfg["source"], font=ImageFont.truetype(mi.INTER, 44), fill=cap_text, anchor="lm")
+        cd.text((x, 100), cfg["source"], font=ImageFont.truetype(mi.body_font_path(), 44), fill=cap_text, anchor="lm")
     t_cap = cfg.get("source_at", steps[0]["t"] + 0.5)
 
     def frame(t):

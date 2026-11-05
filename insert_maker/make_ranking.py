@@ -7,7 +7,7 @@
 
 scene.json:
 {
-  "image": "work/forbes_top.png", "duration": 18, "source": "Forbes", "out": "work/x.mp4",
+  "image": "work/forbes_top.png", "duration": 18, "bg": "blue", "source": "Forbes", "out": "work/x.mp4",
   "steps": [
     {"t": 1.0, "sel": "1:1-1:-1"},
     {"t": 6.0, "sel": "5:1-7:-1", "face": {"img": "work/faces/parsons.jpg", "crop": [360,255,235], "at": [1000, null]}}
@@ -149,15 +149,16 @@ def build(cfg):
     ImageDraw.Draw(st_shadow).rounded_rectangle([sp, sp, sp + sw_, sp + sh_], rad + bw, fill=165)
     st_shadow = st_shadow.filter(ImageFilter.GaussianBlur(0.02 * cw))
 
-    bg = Image.open(os.path.join(HERE, "assets", "bg_4k.png")).convert("RGB")
+    bg = Image.open(mi.resolve_bg(cfg.get("bg", os.path.join(HERE, "assets", "bg_4k.png")))).convert("RGB")
+    cap_label, cap_text, cap_line = mi.caption_colors(bg)
     cap = None
     if cfg.get("source"):
         cap = Image.new("RGBA", (W, 200), (0, 0, 0, 0)); cd = ImageDraw.Draw(cap)
         fl = ImageFont.truetype(mi.INTER, 34); x = 338
         for c in "ИСТОЧНИК":
-            cd.text((x, 100), c, font=fl, fill=mi.CAPTION_LABEL, anchor="lm"); x += fl.getlength(c) + 6
-        x += 28; cd.line([x, 70, x, 130], fill=(60, 64, 96), width=2); x += 32
-        cd.text((x, 100), cfg["source"], font=ImageFont.truetype(mi.INTER, 44), fill=mi.CAPTION_TEXT, anchor="lm")
+            cd.text((x, 100), c, font=fl, fill=cap_label, anchor="lm"); x += fl.getlength(c) + 6
+        x += 28; cd.line([x, 70, x, 130], fill=cap_line, width=2); x += 32
+        cd.text((x, 100), cfg["source"], font=ImageFont.truetype(mi.INTER, 44), fill=cap_text, anchor="lm")
     t_cap = cfg.get("source_at", steps[0]["t"] + 0.5)
 
     def frame(t):

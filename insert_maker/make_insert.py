@@ -28,6 +28,24 @@ W, H = 3840, 2160
 HL_COLOR = np.array([206, 195, 244], np.float32)   # фиолетовый маркер из референса
 CAPTION_LABEL = (114, 119, 143)
 CAPTION_TEXT = (178, 181, 206)
+BG_NAMES = ("blue", "red", "brown", "green", "beige")
+
+
+def resolve_bg(v):
+    """--bg: имя цвета палитры (blue/red/brown/green/beige, с плашкой; grid-<цвет> — без плашки) или путь."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "brand", "backgrounds")
+    if v in BG_NAMES:
+        return os.path.join(root, f"pill_{v}.png")
+    if v.startswith("grid-") and v[5:] in BG_NAMES:
+        return os.path.join(root, f"grid_{v[5:]}.png")
+    return v
+
+
+def caption_colors(bg_img):
+    """Цвета подписи «ИСТОЧНИК»: на светлом фоне — тёмные."""
+    if sum(bg_img.getpixel((600, 1500))) / 3 > 128:
+        return (120, 114, 102), (60, 56, 48), (190, 184, 170)
+    return CAPTION_LABEL, CAPTION_TEXT, (60, 64, 96)
 INTER = "/usr/share/fonts/opentype/inter/Inter-Regular.otf"
 INTER_LIGHT = "/usr/share/fonts/opentype/inter/Inter-Light.otf"
 
@@ -392,7 +410,8 @@ def build(args):
         return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
 
     # фон и подпись
-    bg = Image.open(args.bg).convert("RGB")
+    bg = Image.open(resolve_bg(args.bg)).convert("RGB")
+    cap_label, cap_text, cap_line = caption_colors(bg)
     if bg.size != (W, H):
         bg = bg.resize((W, H), Image.LANCZOS)
     cap_layer = None
@@ -402,12 +421,12 @@ def build(args):
         fl = ImageFont.truetype(INTER, 34)
         x = 338
         for chh in "ИСТОЧНИК":
-            cd.text((x, 100), chh, font=fl, fill=CAPTION_LABEL, anchor="lm")
+            cd.text((x, 100), chh, font=fl, fill=cap_label, anchor="lm")
             x += fl.getlength(chh) + 6
         x += 28
-        cd.line([x, 70, x, 130], fill=(60, 64, 96), width=2)
+        cd.line([x, 70, x, 130], fill=cap_line, width=2)
         x += 32
-        cd.text((x, 100), args.source, font=ImageFont.truetype(INTER, 44), fill=CAPTION_TEXT, anchor="lm")
+        cd.text((x, 100), args.source, font=ImageFont.truetype(INTER, 44), fill=cap_text, anchor="lm")
     t_cap = t_dim
 
     def frame_sticker(t, img, out):
@@ -506,7 +525,8 @@ def main():
     ap.add_argument("--sel", action="append")
     ap.add_argument("--ru", action="append")
     ap.add_argument("--source", default="")
-    ap.add_argument("--bg", default=os.path.join(HERE, "assets", "bg_4k.png"))
+    ap.add_argument("--bg", default=os.path.join(HERE, "assets", "bg_4k.png"),
+                    help="фон: blue/red/brown/green/beige (с плашкой), grid-<цвет> (без плашки) или путь")
     ap.add_argument("--out")
     ap.add_argument("--duration", type=float, default=7.0)
     ap.add_argument("--fps", type=int, default=60)

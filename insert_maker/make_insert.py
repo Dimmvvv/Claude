@@ -321,19 +321,8 @@ def layout(words, fonts, slots):
 
 
 # ---------------------------------------------------------------- build static layers
-def ease(t):  # easeInOutCubic
-    t = min(max(t, 0.0), 1.0)
-    return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
-
-
-def ease_out(t):
-    t = min(max(t, 0.0), 1.0)
-    return 1 - (1 - t) ** 3
-
-
-def ease_out_back(t, c=1.7):
-    t = min(max(t, 0.0), 1.0)
-    return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2
+import motion as M  # noqa: E402
+from motion import ease, ease_out, ease_out_back  # noqa: E402,F401
 
 
 def parse_sel(sel, lines):
@@ -349,6 +338,7 @@ def parse_sel(sel, lines):
 
 def build(args):
     set_format(getattr(args, "format", "long"))
+    M.STYLE = getattr(args, "motion", "ease") or "ease"
     shot = Image.open(args.image).convert("RGB")
     info = detect_layout(shot)
     lines = info["lines"]
@@ -551,11 +541,11 @@ def build(args):
     def frame_sticker(t, img, out):
         # «шлепок»: масштаб с перелётом, поворот доводится до лёгкого наклона,
         # тень сначала «приподнята», потом прилипает
-        pop = ease_out_back(t / 0.5)
+        pop = M.pop(t, M.STICKER_POP)
         s = (0.95 + 0.05 * (t / T)) * (0.4 + 0.6 * pop)
-        ang = -10 * (1 - ease_out(t / 0.6))      # доворачивается до ровного положения
-        op = ease_out(t / 0.1)
-        lift = 1 - ease_out(t / 0.55)
+        ang = M.STICKER_TILT * (1 - ease_out(t / M.STICKER_TURN))      # доворачивается до ровного положения
+        op = ease_out(t / M.APPEAR)
+        lift = 1 - ease_out(t / M.STICKER_LAND)
         cx, cy = W / 2, H * (LAY["sticker_cy"] - 0.02 * (t / T))
         st = Image.new("RGBA", (sw_, sh_), (255, 255, 255, 0))
         st.paste((255, 255, 255, 255), (0, 0), st_alpha)
@@ -598,16 +588,16 @@ def build(args):
 
     def frame(t):
         img = card_at(t)
-        intro = ease_out(t / 0.8)
+        intro = ease_out(t / M.CARD_IN)
         s = 0.90 + 0.05 * intro + 0.05 * (t / T)
-        op = ease_out(t / 0.55)
+        op = ease_out(t / M.CARD_FADE)
         w2, h2 = round(cw * s), round(ch * s)
         cx = W / 2
         cy = H * (LAY["cy"] - 0.025 * intro - 0.02 * (t / T))
         x0, y0 = round(cx - w2 / 2), round(cy - h2 / 2)
         out = bg.copy()
         if cap_layer is not None:
-            ca = ease_out((t - shift - t_cap[0]) / 0.6)     # с листанием подпись ждёт остановки
+            ca = ease_out((t - shift - t_cap[0]) / M.CAPTION)     # с листанием подпись ждёт остановки
             if ca > 0:
                 lay_ = cap_layer.copy()
                 lay_.putalpha(lay_.getchannel("A").point(lambda v: int(v * ca)))
@@ -654,9 +644,9 @@ def main():
     ap.add_argument("--card-w", type=float, default=None, help="ширина карточки, доля кадра (по умолчанию от формата)")
     ap.add_argument("--format", choices=["long", "short"], default="long",
                     help="long — 16:9 3840×2160; short — Shorts 9:16 2160×3840 (безопасные зоны, место под субтитры)")
-    ap.add_argument("--hl-time", type=float, default=0.9)
-    ap.add_argument("--pause", type=float, default=0.9)
-    ap.add_argument("--ru-time", type=float, default=1.2)
+    ap.add_argument("--hl-time", type=float, default=M.HIGHLIGHT_INSERT)
+    ap.add_argument("--pause", type=float, default=M.PAUSE)
+    ap.add_argument("--ru-time", type=float, default=M.TRANSLATE)
     ap.add_argument("--dim", type=float, default=0.62)
     ap.add_argument("--blur", type=float, default=1.3)
     ap.add_argument("--title", default=None,
@@ -669,6 +659,8 @@ def main():
     ap.add_argument("--scroll-from", type=float, default=0, help="откуда листать (y верха окна на странице)")
     ap.add_argument("--scroll-y", type=float, help="где остановиться (y верха окна = картинки на странице)")
     ap.add_argument("--scroll-time", type=float, default=1.7)
+    ap.add_argument("--motion", choices=["ease", "spring"], default="ease",
+                    help="появления: ease — кривая с перелётом (по умолчанию), spring — пружина")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     args = ap.parse_args()

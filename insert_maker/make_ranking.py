@@ -17,7 +17,8 @@ scene.json:
 }
 face.crop = [cx, cy, r] круга на фото; face.at = [x, y] центра на скриншоте (y=null — по центру выделения);
 face.d — диаметр в пикселях скриншота (по умолчанию 300); face.rot — наклон в покое.
-"format": "short" — Shorts 9:16 (2160×3840); "bg", "title" — фон и плашка, как в make_insert.
+"format": "short" — Shorts 9:16 (2160×3840); "bg", "title" — фон и плашка, как в make_insert;
+"motion": "spring" — появления на пружине вместо кривой с перелётом.
 """
 import json, math, os, sys, subprocess
 import numpy as np
@@ -26,6 +27,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import make_insert as mi  # noqa: E402
+import motion as M  # noqa: E402
 
 W, H = mi.W, mi.H
 FPS = 30
@@ -35,6 +37,7 @@ def build(cfg):
     global W, H
     mi.set_format(cfg.get("format", "long")); W, H = mi.W, mi.H
     LAY = mi.LAY
+    M.STYLE = cfg.get("motion", "ease")
     shot = Image.open(cfg["image"]).convert("RGB")
     info = mi.detect_layout(shot)
     lines = info["lines"]
@@ -87,7 +90,7 @@ def build(cfg):
             ycen = (min(r[1] for r in rects) + max(r[3] for r in rects)) / 2
             face = dict(stk=stk, sh=sh, x=(ax * K if ax is not None else cw * 0.7),
                         y=(ay * K if ay is not None else ycen), rot=f.get("rot", 0.0),
-                        t=st["t"] + f.get("delay", 0.25))
+                        t=st["t"] + f.get("delay", M.FACE_DELAY))
         steps.append(dict(t=st["t"], segs=segs, tot=tot, keep=keep, face=face))
 
     dim_at = cfg.get("dim_at", steps[1]["t"] - 0.4 if len(steps) > 1 else 99)
@@ -103,7 +106,7 @@ def build(cfg):
 
     def card(t):
         img = A.copy()
-        dim = mi.ease((t - dim_at) / 0.8)
+        dim = mi.ease((t - dim_at) / M.DIM)
         if dim > 0:
             keep = np.zeros((ch, cw, 1), np.float32)
             for st in steps:
@@ -112,7 +115,7 @@ def build(cfg):
                     keep = np.maximum(keep, st["keep"] * u)
             img = img + (B - img) * (dim * (1 - keep))
         for st in steps:
-            p = mi.ease((t - st["t"]) / 0.7)
+            p = mi.ease((t - st["t"]) / M.HIGHLIGHT)
             if p > 0:
                 m = sweep(st, p, 6 * K)[..., None]
                 img = img * (1 - m * (1 - mi.HL_COLOR / 255))
@@ -124,13 +127,13 @@ def build(cfg):
             p = t - f["t"]
             if p <= 0:
                 continue
-            sc = mi.ease_out_back(p / 0.6, 1.5)
-            if pulse_at is not None and 0 < t - pulse_at - 0.08 * i < 0.5:
-                sc *= 1 + 0.09 * math.sin(math.pi * (t - pulse_at - 0.08 * i) / 0.5)
-            ang = f["rot"] + (-22 if i % 2 == 0 else 22) * (1 - mi.ease_out(p / 0.8)) \
-                + 1.2 * math.sin(2 * math.pi * t / 4.5 + i * 1.7) * mi.ease(p / 1.5)
+            sc = M.pop(p, M.FACE_POP, M.OVERSHOOT_SMALL, M.SPRING_FACE)
+            if pulse_at is not None and 0 < t - pulse_at - M.PULSE_STAGGER * i < 0.5:
+                sc *= 1 + M.PULSE * math.sin(math.pi * (t - pulse_at - M.PULSE_STAGGER * i) / 0.5)
+            ang = f["rot"] + (-M.FACE_TILT if i % 2 == 0 else M.FACE_TILT) * (1 - mi.ease_out(p / M.FACE_TURN)) \
+                + M.FACE_SWAY * math.sin(2 * math.pi * t / M.FACE_SWAY_PERIOD + i * 1.7) * mi.ease(p / 1.5)
             op = mi.ease_out(p / 0.18)
-            lift = 1 - mi.ease_out(p / 0.7)
+            lift = 1 - mi.ease_out(p / M.FACE_LAND)
             if sc < 0.02:
                 continue
             s = f["stk"].resize((max(2, round(f["stk"].width * sc)),) * 2, Image.LANCZOS).rotate(ang, Image.BICUBIC, expand=True)
@@ -170,16 +173,16 @@ def build(cfg):
     def frame(t):
         out = bg.copy()
         if cap is not None:
-            ca = mi.ease_out((t - t_cap) / 0.6)
+            ca = mi.ease_out((t - t_cap) / M.CAPTION)
             if ca > 0:
                 c = cap.copy(); c.putalpha(c.getchannel("A").point(lambda v: int(v * ca)))
                 out.paste(c, (0, int(LAY["cap_y"] + 20 * (1 - ca))), c)
         img = card(t)
-        pop = mi.ease_out_back(t / 0.5)
+        pop = M.pop(t, M.STICKER_POP)
         s = (0.95 + 0.05 * (t / T)) * (0.4 + 0.6 * pop)
-        ang = -10 * (1 - mi.ease_out(t / 0.6))
-        op = mi.ease_out(t / 0.1)
-        lift = 1 - mi.ease_out(t / 0.55)
+        ang = M.STICKER_TILT * (1 - mi.ease_out(t / M.STICKER_TURN))
+        op = mi.ease_out(t / M.APPEAR)
+        lift = 1 - mi.ease_out(t / M.STICKER_LAND)
         cx, cy = W / 2, H * (LAY["sticker_cy"] - 0.02 * (t / T))
         st = Image.new("RGBA", (sw_, sh_), (255, 255, 255, 0))
         st.paste((255, 255, 255, 255), (0, 0), st_alpha)

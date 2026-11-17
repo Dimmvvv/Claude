@@ -16,7 +16,7 @@
   --ru   перевод; *так* = курсив
   --preview  быстрые PNG-кадры вместо видео
 """
-import argparse, os, sys, subprocess, re
+import argparse, json, os, sys, subprocess, re
 from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -105,18 +105,24 @@ def load_bg(v, title=None):
         if bg.size != (W, H):
             bg = bg.resize((W, H), Image.LANCZOS)
     if title:
-        dark = sum(bg.getpixel((600, 1500))) / 3 < 128
-        ink = (255, 255, 255) if dark else (0, 0, 0)
-        ov = Image.new("RGBA", bg.size, (0, 0, 0, 0)); d = ImageDraw.Draw(ov)
-        probe = _pill_font(100); cap = probe.getbbox("Т")[3] - probe.getbbox("Т")[1]
-        f = _pill_font(round(100 * 45 / cap))            # высота прописной как на макете
-        tw = f.getlength(title)
-        (x0, y0), h, padx = LAY["pill"], 110, 55
-        d.rounded_rectangle([x0, y0, x0 + tw + 2 * padx, y0 + h], h // 2,
-                            outline=ink + (int(255 * (0.30 if dark else 0.38)),), width=2)
-        d.text((x0 + padx, y0 + h / 2), title, font=f, fill=ink + (int(255 * (0.48 if dark else 0.55)),), anchor="lm")
-        bg = Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
+        bg = draw_pill(bg, title)
     return bg
+
+
+def draw_pill(bg, title):
+    """Плашка с названием сериала/фильма — как в бренде (Gilroy из brand/fonts, иначе Inter Light):
+    скруглённая обводка, полупрозрачный текст, левый край на первой вертикали сетки."""
+    dark = sum(bg.getpixel((600, 1500))) / 3 < 128
+    ink = (255, 255, 255) if dark else (0, 0, 0)
+    ov = Image.new("RGBA", bg.size, (0, 0, 0, 0)); d = ImageDraw.Draw(ov)
+    probe = _pill_font(100); cap = probe.getbbox("Т")[3] - probe.getbbox("Т")[1]
+    f = _pill_font(round(100 * 45 / cap))            # высота прописной как на макете
+    tw = f.getlength(title)
+    (x0, y0), h, padx = LAY["pill"], 110, 55
+    d.rounded_rectangle([x0, y0, x0 + tw + 2 * padx, y0 + h], h // 2,
+                        outline=ink + (int(255 * (0.30 if dark else 0.38)),), width=2)
+    d.text((x0 + padx, y0 + h / 2), title, font=f, fill=ink + (int(255 * (0.48 if dark else 0.55)),), anchor="lm")
+    return Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
 
 
 def caption_colors(bg_img):
@@ -242,13 +248,14 @@ def available_fonts():
     return fams + sorted(SANS) + sorted(FONT_ALIASES)
 
 
-def load_fonts(size):
-    sp = _font_spec(FONT_STYLE)
+def load_fonts(size, style=None):
+    sp = _font_spec(style or FONT_STYLE)
     if sp[0] == "sys":
         d = INTER_DIR + os.sep
         r = ImageFont.truetype(d + SANS[sp[1]][0], size)
         i = ImageFont.truetype(d + SANS[sp[1]][1], size)
-        return {("cyr", False): r, ("lat", False): r, ("cyr", True): i, ("lat", True): i}
+        b = ImageFont.truetype(d + SANS["sans-bold"][0], size)
+        return {("cyr", False): r, ("lat", False): r, ("cyr", True): i, ("lat", True): i, ("cyr", "b"): b, ("lat", "b"): b}
     _, fam, w = sp
 
     def f(sub, style):
@@ -257,8 +264,14 @@ def load_fonts(size):
             if os.path.exists(p):
                 return ImageFont.truetype(p, size)
         sys.exit(f"Нет шрифта {fam} ({w}). Доступно: {', '.join(available_fonts())}")
-    return {("cyr", False): f("cyrillic", "normal"), ("lat", False): f("latin", "normal"),
-            ("cyr", True): f("cyrillic", "italic"), ("lat", True): f("latin", "italic")}
+    out = {("cyr", False): f("cyrillic", "normal"), ("lat", False): f("latin", "normal"),
+           ("cyr", True): f("cyrillic", "italic"), ("lat", True): f("latin", "italic")}
+    wb = 700 if w < 700 else w                           # жирный фрагмент (§...§): тот же шрифт, вес 700
+    def fb(sub):
+        p = os.path.join(FONTS, f"{fam}-{sub}-{wb}-normal.woff")
+        return ImageFont.truetype(p, size) if os.path.exists(p) else out[("lat" if sub == "latin" else "cyr", False)]
+    out[("cyr", "b")] = fb("cyrillic"); out[("lat", "b")] = fb("latin")
+    return out
 
 
 def body_font_path():
@@ -274,16 +287,18 @@ def is_cyr(ch):
 
 def tokenize(text):
     """-> слова, каждое = список (символ, italic)"""
-    out, ital = [], False
+    out, ital, bold = [], False, False
     word = []
     for ch in text:
         if ch == "*":
             ital = not ital; continue
+        if ch == "§":                                    # жирный фрагмент
+            bold = not bold; continue
         if ch == " ":
             if word:
                 out.append(word); word = []
             continue
-        word.append((ch, ital))
+        word.append((ch, "b" if bold else ital))
     if word:
         out.append(word)
     return out
@@ -337,17 +352,48 @@ def parse_sel(sel, lines):
     return l0 - 1, wi(l0, w0), l1 - 1, wi(l1, w1)
 
 
+def masked_for_detect(shot, spec):
+    """--detect-mask 'x0,y0,x1,y1;...': закрасить фоном области только для поиска строк
+    (крупная буквица/цифра на две строки склеивает их в одну). В кадре всё остаётся как есть."""
+    if not spec:
+        return shot
+    a = np.asarray(shot).copy()
+    bg = np.median(a.reshape(-1, 3)[::97], axis=0).astype(np.uint8)
+    for part in spec.split(";"):
+        x0, y0, x1, y1 = [int(float(v)) for v in part.split(",")]
+        a[y0:y1, x0:x1] = bg
+    return Image.fromarray(a)
+
+
 def build(args):
     set_format(getattr(args, "format", "long"))
     M.STYLE = getattr(args, "motion", "ease") or "ease"
     shot = Image.open(args.image).convert("RGB")
-    info = detect_layout(shot)
+    info = detect_layout(masked_for_detect(shot, getattr(args, "detect_mask", None)))
     lines = info["lines"]
     sels = args.sel if isinstance(args.sel, list) else [args.sel]
-    rus = args.ru if isinstance(args.ru, list) else [args.ru]
+    rus = list(args.ru) if isinstance(args.ru, list) else [args.ru]
+    # шрифт на отдельное выделение: --ru '{sans-bold}текст' (жирный заголовок + обычный текст в одном абзаце)
+    sel_fonts = []
+    for i, r in enumerate(rus):
+        m = re.match(r"\{([^}]+)\}", r or "")
+        sel_fonts.append(m.group(1) if m else None)
+        if m:
+            rus[i] = r[m.end():]
     if len(sels) != len(rus):
         sys.exit("Число --sel и --ru должно совпадать: по паре на каждое выделение")
-    parsed = [parse_sel(s, lines) for s in sels]
+    # префикс «c» у --sel (c1:1-5:-1): строки берутся из детекции по левой колонке — всё правее --col-x закрашено
+    # (когда текст колонки таблицы слипается по строкам с соседними колонками)
+    use_c = [s.strip().startswith("c") for s in sels]
+    sels = [s.strip().lstrip("c") for s in sels]
+    lines_c = None
+    if any(use_c):
+        mk = np.asarray(masked_for_detect(shot, getattr(args, "detect_mask", None))).copy(); mk[:, int(args.col_x):] = info["bg"]
+        lines_c = detect_layout(Image.fromarray(mk))["lines"]
+        asc_c = float(np.median([l["base"] - l["y0"] for l in lines_c]))
+        for l in lines_c:                       # ровная базовая линия: у строк без выносных/с «слипшимися» знаками она «плывёт»
+            l["base"] = l["y0"] + asc_c
+    parsed = [parse_sel(s, lines_c if c else lines) for s, c in zip(sels, use_c)]
     no_ru = all(not r.strip() for r in rus)        # --ru '' → только выделение, без замены на перевод
 
     # размер карточки в финале
@@ -364,7 +410,9 @@ def build(args):
     # прямоугольники выделения (в координатах скриншота) и «слоты» для перевода;
     # размеры берём по самим выделенным строкам (заголовок крупнее текста)
     hl_rects, slots_all, words_all, size0s, sel_m = [], [], [], [], []
-    for (L0, W0, L1, W1), ru in zip(parsed, rus):
+    lines_main = lines
+    for (L0, W0, L1, W1), ru, c in zip(parsed, rus, use_c):
+        lines = lines_c if c else lines_main
         sl = lines[L0:L1 + 1]
         asc_s = float(np.median([l["base"] - l["y0"] for l in sl]))
         h_s = float(np.median([l["y1"] - l["y0"] for l in sl]))
@@ -393,22 +441,27 @@ def build(args):
             slots.append((x0 * K, xmax * K + 2))
         slots_all.append(slots)
         words_all.append(tokenize(ru))
-        size0s.append(asc_s * K / cap_h)
+        fs = sel_fonts[len(size0s)]
+        if fs:
+            pb = load_fonts(200, fs)[("lat", False)].getbbox("dlfhk", anchor="ls")
+            size0s.append(asc_s * K / (-pb[1] / 200))
+        else:
+            size0s.append(asc_s * K / cap_h)
 
     # кегль: как у оригинала, уменьшаем (одинаково для всех выделений), пока всё не влезет
-    def fit(words, slots, s0):
+    def fit(words, slots, s0, fs):
         sz = s0
         while sz > s0 * 0.6:
-            if layout(words, load_fonts(round(sz)), slots):
+            if layout(words, load_fonts(round(sz), fs), slots):
                 return sz / s0
             sz *= 0.97
         return None
-    ratios = [fit(w, sl, s0) for w, sl, s0 in zip(words_all, slots_all, size0s)]
+    ratios = [fit(w, sl, s0, fs) for w, sl, s0, fs in zip(words_all, slots_all, size0s, sel_fonts)]
     if None in ratios:
         sys.exit("Перевод не помещается в строки выделения — сократите текст")
     ratio = min(ratios)
     while True:
-        fonts_all = [load_fonts(round(s0 * ratio)) for s0 in size0s]
+        fonts_all = [load_fonts(round(s0 * ratio), fs) for s0, fs in zip(size0s, sel_fonts)]
         lays = [layout(w, f, sl) for w, f, sl in zip(words_all, fonts_all, slots_all)]
         if all(lays):
             break
@@ -420,24 +473,36 @@ def build(args):
     R = A.copy()
     dr = ImageDraw.Draw(R)
     ink = info["ink"]
-    ru_rects = []
+    ru_rects, keep_rects = [], []
     hi = 0
-    for (L0, W0, L1, W1), lay, fonts, (h_s, pad_s) in zip(parsed, lays, fonts_all, sel_m):
+    for (L0, W0, L1, W1), lay, fonts, (h_s, pad_s), c, ru in zip(parsed, lays, fonts_all, sel_m, use_c, rus):
+        lines = lines_c if c else lines_main
         for i, li in enumerate(range(L0, L1 + 1)):
             r = hl_rects[hi]; hi += 1
             end_ru = (lay[i][-1][0] + word_len(lay[i][-1][1], fonts)) if lay[i] else 0
             x1 = max(r[2] * K, end_ru + pad_s * K)
             # края — до границ строки, чтобы закрыть подчёркивания ссылок и надстрочные знаки (11th)
             rect = [r[0] * K, min(r[1], lines[li]["y0"] - 0.04 * h_s) * K, x1, max(r[3], lines[li]["y1"] + 0.04 * h_s) * K]
+            keep_rects.append(rect)
+            if not ru.strip():                   # --ru '' среди выделений с переводом: оригинал остаётся как есть
+                continue
             ru_rects.append(rect)
             dr.rectangle(rect, fill=info["bg"])
-    for (L0, W0, L1, W1), lay, fonts in zip(parsed, lays, fonts_all):
+    for (L0, W0, L1, W1), lay, fonts, c, ru in zip(parsed, lays, fonts_all, use_c, rus):
+        if not ru.strip():
+            continue
+        lines = lines_c if c else lines_main
         for i, li in enumerate(range(L0, L1 + 1)):
             base = lines[li]["base"] * K
             for x, w in lay[i]:
                 for key, t in runs_of(w):
                     dr.text((x, base), t, font=fonts[key], fill=ink, anchor="ls")
                     x += fonts[key].getlength(t)
+    if getattr(args, "dump", None):                      # отдать оригинал и перевод как картинки (для своих сцен)
+        A.save(args.dump + "_orig.png"); R.save(args.dump + "_ru.png")
+        json.dump({"K": K, "size": [cw, ch], "ru_rects": ru_rects, "hl_rects": [[v * K for v in r] for r in hl_rects]},
+                  open(args.dump + "_rects.json", "w"))
+        print("->", args.dump + "_orig.png / _ru.png / _rects.json"); sys.exit(0)
     Rn = np.asarray(R, np.float32)
     An = np.asarray(A, np.float32)
 
@@ -447,7 +512,7 @@ def build(args):
 
     keep = Image.new("L", (cw, ch), 0)
     kd = ImageDraw.Draw(keep)
-    for r in ru_rects:
+    for r in keep_rects:
         kd.rectangle([r[0] - 4, r[1] - 4, r[2] + 4, r[3] + 4], fill=255)
     keep = np.asarray(keep.filter(ImageFilter.GaussianBlur(3 * K)), np.float32)[..., None] / 255
 
@@ -645,6 +710,9 @@ def main():
     ap.add_argument("--card-w", type=float, default=None, help="ширина карточки, доля кадра (по умолчанию от формата)")
     ap.add_argument("--format", choices=["long", "short"], default="long",
                     help="long — 16:9 3840×2160; short — Shorts 9:16 2160×3840 (безопасные зоны, место под субтитры)")
+    ap.add_argument("--detect-mask", help="x0,y0,x1,y1[;...] — области, которые не учитывать при поиске строк (буквица)")
+    ap.add_argument("--dump", help="префикс: сохранить оригинал/перевод картинками и прямоугольники, без видео")
+    ap.add_argument("--col-x", type=float, default=0, help="для --sel с префиксом c: правая граница колонки (px скриншота)")
     ap.add_argument("--hl-time", type=float, default=M.HIGHLIGHT_INSERT)
     ap.add_argument("--pause", type=float, default=M.PAUSE)
     ap.add_argument("--ru-time", type=float, default=M.TRANSLATE)
@@ -669,7 +737,7 @@ def main():
     stem = os.path.splitext(args.image)[0]
 
     if args.detect:
-        info = detect_layout(Image.open(args.image))
+        info = detect_layout(masked_for_detect(Image.open(args.image).convert("RGB"), args.detect_mask))
         p = stem + "_detect.png"
         draw_detect(Image.open(args.image), info, p)
         for i, l in enumerate(info["lines"], 1):
